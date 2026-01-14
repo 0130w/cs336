@@ -1,12 +1,57 @@
 import os
 import logging
-from typing import Tuple
+from typing import Tuple, BinaryIO
 import regex as re
 from collections import defaultdict
 
 INIT_VOCAB_SIZE = 256
+MINI_CHUNK_SIZE = 4096
+PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+
+def find_chunk_boundaries(
+    file : BinaryIO,
+    special_tokens_bytes : list[bytes],
+    desired_num_of_chunks
+) -> list[int]:
+  file.seek(0, os.SEEK_END)
+  file_size = file.tell()
+  file.seek(0)
+
+  chunk_size = file_size // desired_num_of_chunks
+
+  guess_chunk_boundaries = [i * chunk_size for i in range(desired_num_of_chunks)]
+  guess_chunk_boundaries[-1] = file_size
+  chunk_boundaries = []
+
+  for bi in range(1, len(guess_chunk_boundaries)):
+    if guess_chunk_boundaries[bi - 1] == file_size:
+      break
+    chunk_boundaries.append(guess_chunk_boundaries[bi - 1])
+    if guess_chunk_boundaries[bi] < guess_chunk_boundaries[bi - 1]:
+      guess_chunk_boundaries[bi] = guess_chunk_boundaries[bi - 1] + 1
+    init_pos = guess_chunk_boundaries[bi]
+    file.seek(guess_chunk_boundaries[bi])
+    while True:
+      mini_chunk = file.read(MINI_CHUNK_SIZE)
+      if not mini_chunk:
+        guess_chunk_boundaries[bi] = file_size
+        break
+      found_at = -1
+      for special_token_bytes in special_tokens_bytes:
+        find_pos = mini_chunk.find(special_token_bytes)
+        if find_pos != -1:
+          found_at = find_pos if found_at == -1 else min(found_at, find_pos)
+      if found_at != -1:
+        guess_chunk_boundaries[bi] = init_pos + found_at
+        break
+      init_pos += MINI_CHUNK_SIZE
+
+  if chunk_boundaries and chunk_boundaries[len(chunk_boundaries) - 1] < file_size:
+    chunk_boundaries.append(file_size)
+
+  return chunk_boundaries
 
 def train_bpe(
   input_path: str | os.PathLike,
@@ -17,32 +62,32 @@ def train_bpe(
   assert(vocab_size >= INIT_VOCAB_SIZE)
   vocab : dict[int, bytes] = {i : bytes([i]) for i in range(0, INIT_VOCAB_SIZE)}
   merges : list[tuple[bytes, bytes]] = []
+  desired_num_of_chunks = 16
 
+  # --- Ensure long term matches first ---
+  special_tokens.sort(key=len, reverse=True)
+  special_tokens_bytes : list[bytes] = []
   # Add special tokens
   for special_token in special_tokens:
     if len(vocab) == vocab_size:
       return vocab, merges
-    vocab[len(vocab)] = special_token.encode('utf-8')
+    special_token_bytes = special_token.encode("utf-8")
+    vocab[len(vocab)] = special_token_bytes
+    special_tokens_bytes.append(special_token_bytes)
 
-  with open(input_path, 'r') as f:
-    content = f.read()
+  with open(input_path, 'rb') as f:
+    chunk_boundaries = find_chunk_boundaries(f, special_tokens_bytes, desired_num_of_chunks)
+    freq_table = defaultdict(int)
+    for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
+      f.seek(start)
+      chunk = f.read(end - start).decode("utf-8", errors="ignore")
+      chunk_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), chunk) if special_tokens else [chunk]
+      for chunk_item in chunk_list:
+        for word in re.finditer(PAT, chunk_item):
+          key = tuple(bytes([b]) for b in word.group().encode("utf-8"))
+          freq_table[key] += 1
 
-  # --- Remove special tokens from text ---
-  # --- Ensure long term matches first ---
-  special_tokens.sort(key=len, reverse=True)
-  content_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens if special_token), content) if special_tokens else [content] 
-  logging.debug(f'content_list = {content_list}, type = {type(content_list)}')
-
-  PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
-
-  freq_table = defaultdict(int)
   pair_freq_table : defaultdict[Tuple[bytes, bytes], int] = defaultdict(int)
-  # --- Pre-tokenization ---
-  for content_piece in content_list:
-    for item in re.finditer(PAT, content_piece):
-      key = tuple(bytes([b]) for b in item.group().encode("utf-8"))
-      freq_table[key] += 1
-
   # --- Merge stage ---
   while len(vocab) < vocab_size:
     pair_freq_table.clear()
