@@ -3,6 +3,7 @@ import logging
 from typing import Tuple, BinaryIO
 import regex as re
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 
 INIT_VOCAB_SIZE = 256
 MINI_CHUNK_SIZE = 4096
@@ -79,7 +80,7 @@ def train_bpe(
   assert(vocab_size >= INIT_VOCAB_SIZE)
   vocab : dict[int, bytes] = {i : bytes([i]) for i in range(0, INIT_VOCAB_SIZE)}
   merges : list[tuple[bytes, bytes]] = []
-  desired_num_of_chunks = 16
+  desired_num_of_chunks = 4
   freq_table = defaultdict(int)
 
   # --- Ensure long term matches first ---
@@ -96,10 +97,16 @@ def train_bpe(
   with open(input_path, 'rb') as f:
     chunk_boundaries = find_chunk_boundaries(f, special_tokens_bytes, desired_num_of_chunks)
 
+  tasks = []
   for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
-    local_freq_table = process_single_chunk(input_path, start, end, special_tokens)
-    for key, value in local_freq_table.items():
-      freq_table[key] += value
+    tasks.append((input_path, start, end, special_tokens))
+
+  with ProcessPoolExecutor() as executor:
+    futures = [executor.submit(process_single_chunk, *task) for task in tasks]
+    for future in futures:
+      result = future.result()
+      for key, count in result.items():
+        freq_table[key] += count
 
   pair_freq_table : defaultdict[Tuple[bytes, bytes], int] = defaultdict(int)
   # --- Merge stage ---
