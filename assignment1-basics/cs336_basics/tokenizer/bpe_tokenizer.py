@@ -1,24 +1,22 @@
 import os
-import logging
 from typing import Tuple, BinaryIO
 import regex as re
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
 INIT_VOCAB_SIZE = 256
-MINI_CHUNK_SIZE = 4096
+MINI_CHUNK_SIZE = 65536 # 64KB
 PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
-
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 
 def find_chunk_boundaries(
     file : BinaryIO,
-    special_tokens_bytes : list[bytes],
-    desired_num_of_chunks
+    special_tokens_bytes : list[bytes]
 ) -> list[int]:
   file.seek(0, os.SEEK_END)
   file_size = file.tell()
   file.seek(0)
+  desired_num_of_chunks = os.cpu_count()
+  assert(desired_num_of_chunks is not None)
 
   chunk_size = file_size // desired_num_of_chunks
 
@@ -59,7 +57,7 @@ def process_single_chunk(
     start : int,
     end : int,
     special_tokens : list[str]
-) -> defaultdict[Tuple[bytes] ,int]:
+) -> defaultdict[str ,int]:
   local_freq_table = defaultdict(int)
   with open(input_path, "rb") as f:
     f.seek(start)
@@ -67,7 +65,7 @@ def process_single_chunk(
     chunk_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), chunk) if special_tokens else [chunk]
     for chunk_item in chunk_list:
       for word in re.finditer(PAT, chunk_item):
-        key = tuple(bytes([b]) for b in word.group().encode("utf-8"))
+        key = word.group()
         local_freq_table[key] += 1
   return local_freq_table
 
@@ -80,7 +78,6 @@ def train_bpe(
   assert(vocab_size >= INIT_VOCAB_SIZE)
   vocab : dict[int, bytes] = {i : bytes([i]) for i in range(0, INIT_VOCAB_SIZE)}
   merges : list[tuple[bytes, bytes]] = []
-  desired_num_of_chunks = 4
   freq_table = defaultdict(int)
 
   # --- Ensure long term matches first ---
@@ -95,7 +92,7 @@ def train_bpe(
     special_tokens_bytes.append(special_token_bytes)
 
   with open(input_path, 'rb') as f:
-    chunk_boundaries = find_chunk_boundaries(f, special_tokens_bytes, desired_num_of_chunks)
+    chunk_boundaries = find_chunk_boundaries(f, special_tokens_bytes)
 
   tasks = []
   for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
@@ -105,7 +102,8 @@ def train_bpe(
     futures = [executor.submit(process_single_chunk, *task) for task in tasks]
     for future in futures:
       result = future.result()
-      for key, count in result.items():
+      for word_str, count in result.items():
+        key = tuple(bytes([b]) for b in word_str.encode("utf-8"))
         freq_table[key] += count
 
   pair_freq_table : defaultdict[Tuple[bytes, bytes], int] = defaultdict(int)
