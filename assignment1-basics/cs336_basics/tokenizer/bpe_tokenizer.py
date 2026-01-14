@@ -53,6 +53,23 @@ def find_chunk_boundaries(
 
   return chunk_boundaries
 
+def process_single_chunk(
+    input_path : str | os.PathLike,
+    start : int,
+    end : int,
+    special_tokens : list[str]
+) -> defaultdict[Tuple[bytes] ,int]:
+  local_freq_table = defaultdict(int)
+  with open(input_path, "rb") as f:
+    f.seek(start)
+    chunk = f.read(end - start).decode("utf-8", errors="ignore")
+    chunk_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), chunk) if special_tokens else [chunk]
+    for chunk_item in chunk_list:
+      for word in re.finditer(PAT, chunk_item):
+        key = tuple(bytes([b]) for b in word.group().encode("utf-8"))
+        local_freq_table[key] += 1
+  return local_freq_table
+
 def train_bpe(
   input_path: str | os.PathLike,
   vocab_size: int,
@@ -63,6 +80,7 @@ def train_bpe(
   vocab : dict[int, bytes] = {i : bytes([i]) for i in range(0, INIT_VOCAB_SIZE)}
   merges : list[tuple[bytes, bytes]] = []
   desired_num_of_chunks = 16
+  freq_table = defaultdict(int)
 
   # --- Ensure long term matches first ---
   special_tokens.sort(key=len, reverse=True)
@@ -77,15 +95,11 @@ def train_bpe(
 
   with open(input_path, 'rb') as f:
     chunk_boundaries = find_chunk_boundaries(f, special_tokens_bytes, desired_num_of_chunks)
-    freq_table = defaultdict(int)
-    for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
-      f.seek(start)
-      chunk = f.read(end - start).decode("utf-8", errors="ignore")
-      chunk_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), chunk) if special_tokens else [chunk]
-      for chunk_item in chunk_list:
-        for word in re.finditer(PAT, chunk_item):
-          key = tuple(bytes([b]) for b in word.group().encode("utf-8"))
-          freq_table[key] += 1
+
+  for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
+    local_freq_table = process_single_chunk(input_path, start, end, special_tokens)
+    for key, value in local_freq_table.items():
+      freq_table[key] += value
 
   pair_freq_table : defaultdict[Tuple[bytes, bytes], int] = defaultdict(int)
   # --- Merge stage ---
