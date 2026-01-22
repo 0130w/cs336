@@ -51,15 +51,29 @@ def find_chunk_boundaries(
   return chunk_boundaries
 
 def pretokenize(
+  content: str,
+  special_tokens: list[str] | None
+) -> list[str]:
+  content_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), content) if special_tokens else [content]
+  word_list = []
+  for content_item in content_list:
+    for word in re.finditer(PAT, content_item):
+      word_str = word.group()
+      word_list.append(word_str)
+  return word_list
+
+def get_freq_table(
     content: str,
-    special_tokens: list[str]
+    special_tokens: list[str] | None
 ) -> defaultdict[str, int]:
+  """Run pretokenize process and return freq_table
+  """
   local_freq_table = defaultdict(int)
   content_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), content) if special_tokens else [content]
   for content_item in content_list:
     for word in re.finditer(PAT, content_item):
-      key = word.group()
-      local_freq_table[key] += 1
+      word_str = word.group()
+      local_freq_table[word_str] += 1
   return local_freq_table
 
 def process_single_chunk(
@@ -71,4 +85,4 @@ def process_single_chunk(
   with open(input_path, "rb") as f:
     f.seek(start)
     chunk = f.read(end - start).decode("utf-8", errors="ignore")
-    return pretokenize(chunk, special_tokens)
+    return get_freq_table(chunk, special_tokens)
