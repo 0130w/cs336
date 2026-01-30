@@ -11,6 +11,7 @@ class Linear(torch.nn.Module):
     weight_data = torch.empty((out_features, in_features), device=device, dtype=dtype)
     mean = 0
     std = math.sqrt(2.0 / (in_features + out_features))
+    # use trunc_normal_ instead of normal_ to avoid extreme value
     torch.nn.init.trunc_normal_(weight_data, mean=mean, std=std, a=-3 * std, b=3 * std)
     self.weights = torch.nn.Parameter(weight_data)
 
