@@ -2,9 +2,7 @@ import os
 from typing import Tuple
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
-from cs336_basics.tokenizer.utils import find_chunk_boundaries, process_single_chunk
-
-INIT_VOCAB_SIZE = 256
+from cs336_basics.tokenizer.utils import find_chunk_boundaries, process_single_chunk, INIT_VOCAB_SIZE
 
 def train_bpe(
   input_path: str | os.PathLike,

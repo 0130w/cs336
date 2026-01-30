@@ -6,13 +6,16 @@ class Tokenizer:
   def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens : list[str] | None = None):
     self.vocab = vocab
     self.merges = merges
-    self.special_tokens = special_tokens
+    self.special_tokens = sorted(special_tokens, key=len, reverse=True) if special_tokens else None
     self.merges_dict = { merges[i] : i  for i in range(len(merges)) }
     self.reverse_vocab = { token_bytes : token_id for token_id, token_bytes in vocab.items() }
     return
 
   def __merge_word(self, word: str) -> list[int]:
-    word_token_list = [bytes([b]) for b in word.encode("utf-8")]
+    word_bytes = word.encode("utf-8")
+    if self.special_tokens is not None and word in self.special_tokens:
+      return [self.reverse_vocab[word_bytes]]
+    word_token_list = [bytes([b]) for b in word_bytes]
     if len(word_token_list) <= 1:
       return [self.reverse_vocab[token_bytes] for token_bytes in word_token_list]
     prev = { i : i - 1 for i in range(len(word_token_list)) }
@@ -61,4 +64,4 @@ class Tokenizer:
       yield from self.encode(text)
 
   def decode(self, ids: list[int]) -> str:
-    return b"".join(self.vocab.get(id, b"") for id in ids).decode("utf-8")
+    return b"".join(self.vocab.get(id, b"") for id in ids).decode("utf-8", errors="replace")

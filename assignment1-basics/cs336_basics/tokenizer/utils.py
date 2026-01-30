@@ -3,6 +3,7 @@ import regex as re
 from typing import BinaryIO
 from collections import defaultdict
 
+INIT_VOCAB_SIZE = 256
 MINI_CHUNK_SIZE = 65536 # 64KB
 PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
@@ -54,9 +55,16 @@ def pretokenize(
   content: str,
   special_tokens: list[str] | None
 ) -> list[str]:
-  content_list = re.split("|".join(re.escape(special_token) for special_token in special_tokens), content) if special_tokens else [content]
+  if special_tokens:
+    pattern = "(" + "|".join(re.escape(special_token) for special_token in special_tokens) + ")"
+    content_list : list[str] = re.split(pattern, content)
+  else:
+    content_list : list[str] = [content]
   word_list = []
   for content_item in content_list:
+    if special_tokens is not None and content_item in special_tokens:
+      word_list.append(content_item)
+      continue
     for word in re.finditer(PAT, content_item):
       word_str = word.group()
       word_list.append(word_str)
