@@ -36,8 +36,10 @@ class Tokenizer:
       next[i] = next[j]
       prev[j] = next[j] = -1 # set word_token_list[j] invalid
       if next[i] != -1:
+        prev[next[i]] = i
         __add_pair(i, next[i])
       if prev[i] != -1:
+        next[prev[i]] = i
         __add_pair(prev[i], i)
     result_ids = []
     curr = 0
